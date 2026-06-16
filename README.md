@@ -71,6 +71,31 @@ You can also pass the return value of another translation as a parameter, since 
 let greeting = Global::greeting(Global::world());
 ```
 
+## 5. Fallback Chain (Optional)
+
+You can configure a **fallback chain** in your `Cargo.toml` under `[package.metadata.shakehand]`.
+
+When a language has no translation for a key, the system will automatically walk the chain
+ to find the nearest language that has one.
+
+```toml
+[package.metadata.shakehand]
+# For any language not explicitly listed, fall back to English
+fallback.other = "en"
+
+# Specific fallback rules
+fallback.zh_HK = "zh_CN"   # Hong Kong Trad -> Simplified Chinese
+fallback.zh_TW = "zh_CN"   # Taiwan Trad -> Simplified Chinese
+fallback.zh_CN = "en"      # Simplified Chinese -> English
+fallback.it = "fr"          # Italian -> French
+```
+
+The chain resolution is **at runtime via a generated `FallbackSolver`**:
+- Each language has a `try_fallback_once()` step defined in a compile-time generated match.
+- Translation functions loop through the chain until a language with the value is found.
+- `fallback.other` is the ultimate fallback (falls back to `locale!`'s `fallback` parameter if unset).
+- All languages in the chain are automatically added to the `Languages` enum, even if they
+  have no translations in the locale files.
 
 
 # Contributing

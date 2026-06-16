@@ -1,0 +1,13 @@
+[en]
+hello = "Hello"
+goodbye = "Goodbye"
+
+[zh_CN]
+hello = "你好"
+
+[fr]
+hello = "Bonjour"
+goodbye = "Au revoir"
+
+[it]
+goodbye = "Arrivederci"

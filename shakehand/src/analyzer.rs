@@ -179,6 +179,55 @@ pub fn scan_toml_files(dir: &Path) -> Vec<(Vec<String>, PathBuf)> {
     files
 }
 
+/// Fallback chain configuration read from the crate's `Cargo.toml` `[package.metadata.shakehand]`
+#[derive(Clone, Debug)]
+pub struct FallbackConfig {
+    /// Per-language fallback: `source_language -> fallback_language`
+    pub fallback_map: BTreeMap<String, String>,
+    /// Default fallback for any language not in `fallback_map` (`fallback.other`)
+    pub default_fallback: String,
+}
+
+/// Read fallback configuration from the crate's `Cargo.toml`
+/// under `[package.metadata.shakehand]`.
+///
+/// Expects entries like:
+/// ```toml
+/// [package.metadata.shakehand]
+/// fallback.other = "en"
+/// fallback.zh_HK = "zh_CN"
+/// fallback.zh_TW = "zh_CN"
+/// ```
+pub fn read_fallback_from_manifest(manifest_dir: &str) -> Option<FallbackConfig> {
+    let cargo_toml_path = Path::new(manifest_dir).join("Cargo.toml");
+    let content = fs::read_to_string(&cargo_toml_path).ok()?;
+    let value: toml::Value = content.parse().ok()?;
+
+    let shakehand = value.get("package")?.get("metadata")?.get("shakehand")?;
+
+    let mut fallback_map = BTreeMap::new();
+    let mut default_fallback = String::from("en");
+
+    // In TOML, `fallback.other = "en"` under `[package.metadata.shakehand]`
+    // creates a nested table `{ fallback: { other: "en", ... } }`.
+    if let Some(fallback_table) = shakehand.get("fallback").and_then(|v| v.as_table()) {
+        for (key, val) in fallback_table {
+            if let Some(fb_lang) = val.as_str() {
+                if key == "other" {
+                    default_fallback = fb_lang.to_string();
+                } else {
+                    fallback_map.insert(key.to_string(), fb_lang.to_string());
+                }
+            }
+        }
+    }
+
+    Some(FallbackConfig {
+        fallback_map,
+        default_fallback,
+    })
+}
+
 /// Parse a toml file
 pub fn parse_toml_file(path: &Path) -> Option<TomlFile> {
     let content = fs::read_to_string(path).ok()?;

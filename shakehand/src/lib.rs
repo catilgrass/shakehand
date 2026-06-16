@@ -79,6 +79,30 @@
 //! let greeting = Global::greeting(Global::world());
 //! ```
 //!
+//! ## 5. Fallback Chain (Optional)
+//!
+//! You can configure a **fallback chain** in your `Cargo.toml` under `[package.metadata.shakehand]`.
+//! When a language has no translation for a key, the system will automatically walk the chain
+//! to find the nearest language that has one.
+//!
+//! ```toml
+//! [package.metadata.shakehand]
+//! # For any language not explicitly listed, fall back to English
+//! fallback.other = "en"
+//! # Specific fallback rules
+//! fallback.zh_HK = "zh_CN"   # Hong Kong Trad -> Simplified Chinese
+//! fallback.zh_TW = "zh_CN"   # Taiwan Trad -> Simplified Chinese
+//! fallback.zh_CN = "en"      # Simplified Chinese -> English
+//! fallback.it = "fr"          # Italian -> French
+//! ```
+//!
+//! The chain resolution is **at runtime via a generated `FallbackSolver`**:
+//! - Each language has a `try_fallback_once()` step defined in a compile-time generated match.
+//! - Translation functions loop through the chain until a language with the value is found.
+//! - `fallback.other` is the ultimate fallback (falls back to `locale!`'s `fallback` parameter if unset).
+//! - All languages in the chain are automatically added to the `Languages` enum, even if they
+//!   have no translations in the locale files.
+//!
 //! # Contributing
 //!
 //! Directly open a PR to the [repository](https://github.com/catilgrass/shakehand) and mention [@Weicao-CatilGrass](https://github.com/Weicao-CatilGrass).
@@ -131,15 +155,46 @@ pub fn locale(input: TokenStream) -> TokenStream {
         }
     }
 
+    // Read fallback chain from the crate's Cargo.toml [package.metadata.shakehand]
+    let fallback_config = analyzer::read_fallback_from_manifest(&manifest_dir);
+
+    // `default_fallback`: use `fallback.other` from Cargo.toml, else the macro's `fallback` param
+    let default_fallback = fallback_config
+        .as_ref()
+        .map(|c| c.default_fallback.as_str())
+        .unwrap_or(&input.fallback)
+        .to_string();
+    let fallback_map = fallback_config.map(|c| c.fallback_map).unwrap_or_default();
+
+    // Add all languages referenced in the fallback chain (keys and values) to `all_languages`,
+    // so the `Languages` enum includes variants that the chain may reference.
+    for (k, v) in &fallback_map {
+        all_languages.insert(k.clone());
+        all_languages.insert(v.clone());
+    }
+    all_languages.insert(default_fallback.clone());
+
     if parsed_files.is_empty() {
-        let lang_enum =
-            shakehand::generate_module(parsed_files, all_languages, input.fallback, &input.path);
+        let lang_enum = shakehand::generate_module(
+            parsed_files,
+            all_languages,
+            input.fallback,
+            fallback_map,
+            default_fallback,
+            &input.path,
+        );
         return TokenStream::from(quote::quote! {
             #lang_enum
         });
     }
 
-    let generated =
-        shakehand::generate_module(parsed_files, all_languages, input.fallback, &input.path);
+    let generated = shakehand::generate_module(
+        parsed_files,
+        all_languages,
+        input.fallback,
+        fallback_map,
+        default_fallback,
+        &input.path,
+    );
     TokenStream::from(generated)
 }

@@ -133,66 +133,34 @@ fn make_format_expr(value: &str) -> TokenStream2 {
     quote! { format!(#fmt_str, #(#format_args),*) }
 }
 
-/// Generate match arms for a single entry (arms for languages with values) and a `_ =>` catch-all (fallback)
-fn make_match_arms(
-    entry: &TranslationEntry,
-    all_available: &BTreeSet<String>,
-    fallback: &str,
-) -> (Vec<TokenStream2>, TokenStream2) {
+/// Generate match arms for a single entry (only for languages that have a value)
+/// The loop in `generate_entry_method` handles fallback chain walking.
+fn make_match_arms(entry: &TranslationEntry) -> Vec<TokenStream2> {
     let mut arms: Vec<TokenStream2> = Vec::new();
-    let mut found_fallback = false;
 
-    let mut fallback_arm = if entry.has_params {
-        quote! { _ => ::std::string::String::new(), }
-    } else {
-        quote! { _ => "", }
-    };
-
-    for lang in all_available {
+    for lang in entry.values.keys() {
         let value = entry.values.get(lang.as_str());
         let variant_name = format_ident!("{}", lang_to_variant(lang));
-        let is_fallback = lang == fallback;
 
         match value {
             Some(v) if entry.has_params => {
                 let body = make_format_expr(v);
-                let arm = quote! { Languages::#variant_name => #body, };
-                if is_fallback {
-                    found_fallback = true;
-                    fallback_arm = quote! { _ => #body, };
-                }
-                arms.push(arm);
+                arms.push(quote! { Languages::#variant_name => return #body, });
             }
             Some(v) => {
-                let arm = quote! { Languages::#variant_name => #v, };
-                if is_fallback {
-                    found_fallback = true;
-                    fallback_arm = quote! { _ => #v, };
-                }
-                arms.push(arm);
+                arms.push(quote! { Languages::#variant_name => return #v, });
             }
             None => {}
         }
     }
 
-    // When the fallback language doesn't have a value for this key, use the first available language as a catch-all
-    if !found_fallback && let Some(first_val) = entry.values.values().next() {
-        if entry.has_params {
-            let body = make_format_expr(first_val);
-            fallback_arm = quote! { _ => #body, };
-        } else {
-            fallback_arm = quote! { _ => #first_val, };
-        }
-    }
-
-    (arms, fallback_arm)
+    arms
 }
 
 /// Generate a method for a single translation entry
 fn generate_entry_method(
     entry: &TranslationEntry,
     all_languages: &BTreeSet<String>,
-    fallback: &str,
 ) -> TokenStream2 {
     let method_name = format_ident!("{}", key_to_ident(&entry.key));
     let key_str = format!("Key \"{}\"", entry.key);
@@ -237,9 +205,33 @@ fn generate_entry_method(
         };
     }
 
-    // Only generate match arms for languages that have a translation; missing ones fall through to `_ =>`
-    let (match_arms, catch_all) =
-        make_match_arms(entry, &entry.values.keys().cloned().collect(), fallback);
+    // Generate match arms only for languages that have a value;
+    // missing ones fall through to `_ => {}` which triggers the fallback loop
+    let match_arms = make_match_arms(entry);
+    let loop_body = if match_arms.is_empty() {
+        // No language has a value for this key — should not happen with valid data
+        let panic_msg = format!(
+            "shakehand: key `{}` has no translation in any language",
+            entry.key,
+        );
+        quote! {
+            let __lang = lang();
+            match __lang {
+                _ => panic!(#panic_msg),
+            }
+        }
+    } else {
+        quote! {
+            let mut __lang = lang();
+            loop {
+                match __lang {
+                    #(#match_arms)*
+                    _ => {},
+                }
+                __lang = FallbackSolver::try_fallback_once(__lang);
+            }
+        }
+    };
 
     if entry.has_params {
         let params_with_type: Vec<TokenStream2> = entry
@@ -280,10 +272,7 @@ fn generate_entry_method(
             #[must_use]
             pub fn #method_name (#(#params_with_type),*) -> String {
                 #(#param_bindings)*
-                match lang() {
-                    #(#match_arms)*
-                    #catch_all
-                }
+                #loop_body
             }
         }
     } else {
@@ -294,10 +283,7 @@ fn generate_entry_method(
             #(#lang_docs)*
             #[must_use]
             pub fn #method_name () -> &'static str {
-                match lang() {
-                    #(#match_arms)*
-                    #catch_all
-                }
+                #loop_body
             }
         }
     }
@@ -308,13 +294,12 @@ fn generate_struct(
     toml_file: &TomlFile,
     all_languages: &BTreeSet<String>,
     locale_path: &str,
-    fallback: &str,
 ) -> TokenStream2 {
     let struct_name = format_ident!("{}", toml_file.struct_name);
     let methods: Vec<TokenStream2> = toml_file
         .entries
         .iter()
-        .map(|entry| generate_entry_method(entry, all_languages, fallback))
+        .map(|entry| generate_entry_method(entry, all_languages))
         .collect();
 
     let struct_name_str = toml_file.struct_name.as_str();
@@ -361,14 +346,67 @@ fn generate_struct(
     }
 }
 
+/// Generate the `FallbackSolver` struct with a `try_fallback_once` method
+fn generate_fallback_solver(
+    all_languages: &BTreeSet<String>,
+    fallback_map: &BTreeMap<String, String>,
+    default_fallback: &str,
+) -> TokenStream2 {
+    let mut arms: Vec<TokenStream2> = Vec::new();
+
+    for lang in all_languages {
+        let variant = format_ident!("{}", lang_to_variant(lang));
+        let fb = fallback_map
+            .get(lang.as_str())
+            .map(|s| s.as_str())
+            .unwrap_or(default_fallback);
+        let fb_variant = format_ident!("{}", lang_to_variant(fb));
+        arms.push(quote! { Languages::#variant => Languages::#fb_variant, });
+    }
+
+    // Ensure `default_fallback` is a valid variant
+    let default_fb_variant = if all_languages.contains(default_fallback) {
+        format_ident!("{}", lang_to_variant(default_fallback))
+    } else {
+        // Fall back to the first available language
+        let first = all_languages.iter().next().expect("at least one language");
+        format_ident!("{}", lang_to_variant(first))
+    };
+
+    quote! {
+        /// Fallback solver: resolves the fallback chain one step at a time.
+        ///
+        /// Each language maps to its configured fallback.
+        /// Languages without an explicit fallback map to `default_fallback`.
+        /// The root fallback maps to itself, terminating the chain.
+        pub struct FallbackSolver;
+
+        impl FallbackSolver {
+            /// Try to fall back one step from the given language.
+            /// Returns the fallback language to try next.
+            #[inline(always)]
+            pub fn try_fallback_once(lang: Languages) -> Languages {
+                match lang {
+                    #(#arms)*
+                    _ => Languages::#default_fb_variant,
+                }
+            }
+        }
+    }
+}
+
 /// Generate the complete module code
 pub fn generate_module(
     files: Vec<TomlFile>,
     all_languages: BTreeSet<String>,
     fallback: String,
+    fallback_map: BTreeMap<String, String>,
+    default_fallback: String,
     locale_path: &str,
 ) -> TokenStream2 {
     let lang_enum = generate_languages_enum(&all_languages, &fallback, locale_path);
+    let fallback_solver =
+        generate_fallback_solver(&all_languages, &fallback_map, &default_fallback);
 
     // Group by module path
     let mut root_files: Vec<&TomlFile> = Vec::new();
@@ -386,7 +424,7 @@ pub fn generate_module(
     // Generate root-level structs
     let root_structs: Vec<TokenStream2> = root_files
         .iter()
-        .map(|f| generate_struct(f, &all_languages, locale_path, &fallback))
+        .map(|f| generate_struct(f, &all_languages, locale_path))
         .collect();
 
     // Generate sub-modules
@@ -403,7 +441,7 @@ pub fn generate_module(
                         entries: f.entries.clone(),
                         all_languages: f.all_languages.clone(),
                     };
-                    generate_struct(&fixed_file, &all_languages, locale_path, &fallback)
+                    generate_struct(&fixed_file, &all_languages, locale_path)
                 })
                 .collect();
 
@@ -417,6 +455,8 @@ pub fn generate_module(
 
     quote! {
         #lang_enum
+
+        #fallback_solver
 
         #(#root_structs)*
 
