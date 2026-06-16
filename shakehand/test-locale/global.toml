@@ -1,0 +1,7 @@
+[en]
+world = "world"
+greeting = "Hello, %{someone}!"
+
+[zh_CN]
+world = "世界"
+gretting = "你好，%{someone}！"

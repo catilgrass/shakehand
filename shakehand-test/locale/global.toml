@@ -1,0 +1,59 @@
+[en]
+world = "world"
+greeting = "Hello, %{someone}!"
+farewell = "Goodbye, %{someone}!"
+thanks = "Thank you!"
+
+[zh_CN]
+world = "世界"
+greeting = "你好，%{someone}！"
+farewell = "再见，%{someone}！"
+thanks = "谢谢！"
+
+[ja]
+world = "世界"
+greeting = "こんにちは、%{someone}！"
+farewell = "さようなら、%{someone}！"
+thanks = "ありがとうございます！"
+
+[ko]
+world = "세계"
+greeting = "안녕하세요, %{someone}님！"
+farewell = "안녕히 가세요, %{someone}님！"
+thanks = "감사합니다！"
+
+[fr]
+world = "monde"
+greeting = "Bonjour, %{someone} !"
+farewell = "Au revoir, %{someone} !"
+thanks = "Merci !"
+
+[de]
+world = "Welt"
+greeting = "Hallo, %{someone}!"
+farewell = "Auf Wiedersehen, %{someone}!"
+thanks = "Danke!"
+
+[es]
+world = "mundo"
+greeting = "¡Hola, %{someone}!"
+farewell = "¡Adiós, %{someone}!"
+thanks = "¡Gracias!"
+
+[ru]
+world = "мир"
+greeting = "Привет, %{someone}!"
+farewell = "До свидания, %{someone}!"
+thanks = "Спасибо!"
+
+[ar]
+world = "عالم"
+greeting = "مرحبًا، %{someone}!"
+farewell = "وداعًا، %{someone}!"
+thanks = "شكرًا!"
+
+[pt]
+world = "mundo"
+greeting = "Olá, %{someone}!"
+farewell = "Tchau, %{someone}!"
+thanks = "Obrigado!"
