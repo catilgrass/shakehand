@@ -346,12 +346,98 @@ fn generate_struct(
     }
 }
 
-/// Generate the `FallbackSolver` struct with a `try_fallback_once` method
+/// Generate the `FallbackSolver` struct with a `try_fallback_once` method.
+/// Detects cycles in the fallback chain at compile time and emits `compile_error!`.
 fn generate_fallback_solver(
     all_languages: &BTreeSet<String>,
     fallback_map: &BTreeMap<String, String>,
     default_fallback: &str,
 ) -> TokenStream2 {
+    // ---- Cycle Detection ----
+    // Traverse the fallback chain for each language; if a language is encountered
+    // again, a cycle exists. The `default_fallback` pointing to itself (as a
+    // termination condition) is intentionally allowed.
+    let mut cycle_errors: Vec<String> = Vec::new();
+    let mut seen_cycle_roots: BTreeSet<String> = BTreeSet::new();
+
+    for start in all_languages.iter() {
+        if seen_cycle_roots.contains(start.as_str()) {
+            continue;
+        }
+
+        let mut visited: BTreeSet<String> = BTreeSet::new();
+        let mut current: &str = start.as_str();
+        visited.insert(current.to_string());
+
+        loop {
+            match fallback_map.get(current) {
+                Some(next) if next == current => {
+                    // Self-loop: only acceptable if it's the default_fallback.
+                    // `fallback.other = "en"` with `en -> en` is intentional.
+                    if current != default_fallback {
+                        cycle_errors.push(format!(
+                            "shakehand: `fallback.{}` points to itself, which is only allowed for the default fallback",
+                            current,
+                        ));
+                    }
+                    break;
+                }
+                Some(next) => {
+                    if visited.contains(next.as_str()) {
+                        // Cycle detected! Collect the cycle path for the error message.
+                        let mut cycle = vec![start.to_string()];
+                        let mut c: &str = start.as_str();
+                        while let Some(n) = fallback_map.get(c) {
+                            cycle.push(n.to_string());
+                            if n == next {
+                                break;
+                            }
+                            c = n;
+                        }
+                        let cycle_str = cycle.join(" → ");
+                        cycle_errors.push(format!(
+                            "shakehand: fallback chain cycle detected: {}",
+                            cycle_str,
+                        ));
+
+                        // Mark all visited languages as processed to
+                        //  avoid reporting the same cycle multiple times.
+                        seen_cycle_roots.extend(visited.iter().cloned());
+                        break;
+                    }
+                    visited.insert(next.clone());
+                    current = next.as_str();
+                }
+                None => break, // Chain terminates normally
+            }
+        }
+    }
+
+    // If cycles found, emit compile_error! for each
+    if !cycle_errors.is_empty() {
+        let error_tokens: Vec<TokenStream2> = cycle_errors
+            .iter()
+            .map(|e| {
+                quote! { ::core::compile_error!(#e); }
+            })
+            .collect();
+
+        // Still generate a minimal FallbackSolver so other code compiles
+        let dfb = format_ident!("{}", lang_to_variant(default_fallback));
+        return quote! {
+            #(#error_tokens)*
+
+            pub struct FallbackSolver;
+            impl FallbackSolver {
+                #[inline(always)]
+                pub fn try_fallback_once(lang: Languages) -> Languages {
+                    match lang { _ => Languages::#dfb, }
+                }
+            }
+        };
+    }
+
+    // ---- Normal generation ----
     let mut arms: Vec<TokenStream2> = Vec::new();
 
     for lang in all_languages {
@@ -368,7 +454,6 @@ fn generate_fallback_solver(
     let default_fb_variant = if all_languages.contains(default_fallback) {
         format_ident!("{}", lang_to_variant(default_fallback))
     } else {
-        // Fall back to the first available language
         let first = all_languages.iter().next().expect("at least one language");
         format_ident!("{}", lang_to_variant(first))
     };

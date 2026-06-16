@@ -16,7 +16,4 @@ fallback.vi = "zh_CN"               # Vietnamese -> Simplified Chinese
 fallback.ms = "id"                  # Malay -> Indonesian
 fallback.it = "fr"                  # Italian -> French
 fallback.pt = "es"                  # Portuguese -> Spanish
-fallback.sv = "no"                  # Swedish -> Norwegian
-fallback.no = "da"                  # Norwegian -> Danish
-fallback.da = "sv"                  # Danish -> Swedish
 fallback.tr = "ar"                  # Turkish -> Arabic
