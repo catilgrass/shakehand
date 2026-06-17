@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "shakehand"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "just_fmt",
  "proc-macro2",
