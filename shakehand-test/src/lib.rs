@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod test {
-    use crate::locale::{Global, Languages, set_lang};
+    use crate::locale::{Global, Languages, set_lang, sub::Sub};
     use std::sync::{Mutex, MutexGuard};
 
     /// Global lock to serialize tests that mutate `__SHAKE_HAND_LANG`.
@@ -243,6 +243,20 @@ mod test {
     #[should_panic(expected = "unknown language")]
     fn test_from_str_unknown() {
         let _ = Languages::from("klingon");
+    }
+
+    #[test]
+    fn test_sub_module_english() {
+        let _lock = lock_lang();
+        set_lang(Languages::en);
+        assert_eq!(Sub::test(), "test submod");
+    }
+
+    #[test]
+    fn test_sub_module_chinese() {
+        let _lock = lock_lang();
+        set_lang(Languages::zh_CN);
+        assert_eq!(Sub::test(), "测试子模块");
     }
 }
 

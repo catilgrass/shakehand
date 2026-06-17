@@ -1,0 +1,5 @@
+[en]
+test = "test submod"
+
+[zh_CN]
+test = "测试子模块"

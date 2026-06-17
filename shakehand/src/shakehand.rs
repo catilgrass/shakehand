@@ -726,6 +726,7 @@ pub fn generate_module(
 
             quote! {
                 pub mod #mod_ident {
+                    use super::*;
                     #(#sub_structs)*
                 }
             }
