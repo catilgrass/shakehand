@@ -93,7 +93,7 @@
 //! fallback.zh_HK = "zh_CN"   # Hong Kong Trad -> Simplified Chinese
 //! fallback.zh_TW = "zh_CN"   # Taiwan Trad -> Simplified Chinese
 //! fallback.zh_CN = "en"      # Simplified Chinese -> English
-//! fallback.it = "fr"          # Italian -> French
+//! fallback.it = "fr"         # Italian -> French
 //! ```
 //!
 //! The chain resolution is **at runtime via a generated `FallbackSolver`**:
