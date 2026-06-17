@@ -7,6 +7,180 @@ use crate::analyzer::{
     replace_params_with_format,
 };
 
+/// Build a compile-time trie that matches an input `&str` against known language names
+/// character by character (inspired by dispatch_tree_gen.rs).
+///
+/// `langs`: slice of (snake_case_name, variant_ident)
+/// `depth`: current character index being compared
+fn gen_trie_match(langs: &[(String, Ident)], depth: usize) -> TokenStream2 {
+    if langs.is_empty() {
+        return quote! {};
+    }
+
+    // Single candidate: use `starts_with` + length check for exact match
+    if langs.len() == 1 {
+        let (name, variant) = &langs[0];
+        let name_lit = proc_macro2::Literal::string(name);
+        let len = name.len();
+        return quote! {
+            if s.starts_with(#name_lit) && s.len() == #len {
+                return Ok(Languages::#variant);
+            }
+        };
+    }
+
+    // Multiple candidates: group by character at `depth`
+    let mut groups: BTreeMap<char, Vec<(String, Ident)>> = BTreeMap::new();
+    let mut exact_matches: Vec<(String, Ident)> = Vec::new();
+
+    for (name, variant) in langs {
+        let name_str = name.as_str();
+        let ch = name_str.chars().nth(depth);
+        match ch {
+            Some(c) => {
+                groups
+                    .entry(c)
+                    .or_default()
+                    .push((name.clone(), variant.clone()));
+            }
+            None => {
+                exact_matches.push((name.clone(), variant.clone()));
+            }
+        }
+    }
+
+    // Exact-match checks: names that end exactly at this depth
+    let exact_checks: Vec<TokenStream2> = exact_matches
+        .iter()
+        .map(|(name, variant)| {
+            let name_lit = proc_macro2::Literal::string(name);
+            let len = name.len();
+            quote! {
+                if s.starts_with(#name_lit) && s.len() == #len {
+                    return Ok(Languages::#variant);
+                }
+            }
+        })
+        .collect();
+
+    // Character match arms for deeper traversal
+    let arms: Vec<TokenStream2> = groups
+        .iter()
+        .map(|(&ch, sub_langs)| {
+            if sub_langs.len() == 1 {
+                let (name, variant) = &sub_langs[0];
+                let name_lit = proc_macro2::Literal::string(name);
+                let len = name.len();
+                quote! {
+                    Some(#ch) => {
+                        if s.starts_with(#name_lit) && s.len() == #len {
+                            return Ok(Languages::#variant);
+                        }
+                    }
+                }
+            } else {
+                let sub_body = gen_trie_match(sub_langs, depth + 1);
+                quote! {
+                    Some(#ch) => {
+                        #sub_body
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let char_match = quote! {
+        match s.as_bytes().get(#depth).copied().map(|b| b as char) {
+            #(#arms)*
+            _ => {}
+        }
+    };
+
+    if exact_checks.is_empty() && !arms.is_empty() {
+        char_match
+    } else if !exact_checks.is_empty() && arms.is_empty() {
+        quote! { #(#exact_checks)* }
+    } else {
+        quote! {
+            #(#exact_checks)*
+            #char_match
+        }
+    }
+}
+
+/// Generate the `Display` impl for `Languages`
+fn gen_lang_display(variants: &[(Ident, String)]) -> TokenStream2 {
+    let arms: Vec<TokenStream2> = variants
+        .iter()
+        .map(|(ident, raw)| {
+            let raw_str = raw.as_str();
+            quote! {
+                Languages::#ident => write!(f, #raw_str),
+            }
+        })
+        .collect();
+
+    quote! {
+        impl ::std::fmt::Display for Languages {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                match self {
+                    #(#arms)*
+                }
+            }
+        }
+    }
+}
+
+/// Generate the `From<&str>` impl for `Languages` using a compile-time trie
+fn gen_lang_from_str(langs: &[(String, Ident)]) -> TokenStream2 {
+    let match_body = gen_trie_match(langs, 0);
+
+    // Build available languages list for error message
+    let lang_names: Vec<String> = langs.iter().map(|(name, _)| name.clone()).collect();
+    let avail = lang_names.join(", ");
+    let avail_lit = proc_macro2::Literal::string(&avail);
+
+    quote! {
+        impl ::std::convert::From<&str> for Languages {
+            fn from(s: &str) -> Self {
+                // Normalize: trim, lowercase, non-alphanum -> '_'
+                let __s = {
+                    let __trimmed = s.trim();
+                    let mut __buf = ::std::string::String::with_capacity(__trimmed.len());
+                    for __c in __trimmed.chars() {
+                        if __c.is_ascii_alphanumeric() {
+                            __buf.push(__c.to_ascii_lowercase());
+                        } else {
+                            __buf.push('_');
+                        }
+                    }
+                    __buf
+                };
+                let s: &str = &__s;
+
+                // Helper using Result for early-return in trie
+                fn __try_from_str(s: &str) -> Result<Languages, ()> {
+                    #match_body
+                    Err(())
+                }
+                match __try_from_str(s) {
+                    Ok(lang) => lang,
+                    Err(_) => panic!(
+                        "shakehand: unknown language '{}', available languages: [{}]",
+                        s, #avail_lit
+                    ),
+                }
+            }
+        }
+
+        impl ::std::convert::From<String> for Languages {
+            fn from(s: String) -> Self {
+                Self::from(s.as_str())
+            }
+        }
+    }
+}
+
 /// Generate the language enum (and functions `lang()` / `set_lang()`)
 fn generate_languages_enum(
     all_languages: &BTreeSet<String>,
@@ -42,8 +216,10 @@ fn generate_languages_enum(
             }
 
             #[inline(always)]
-            /// Set the current language in the global static variable
-            pub fn set_lang(_lang: Languages) {
+            /// Set the current language
+            ///
+            /// Accepts any type that implements `Into<Languages>` (e.g. `Languages`, `&str`, `String`).
+            pub fn set_lang(_lang: impl Into<Languages>) {
                 panic!("shakehand: no locale files found")
             }
         };
@@ -77,7 +253,6 @@ fn generate_languages_enum(
         .collect();
 
     // lang() match arms (match u8 values as returned by AtomicU8::load)
-
     let lang_match_arms: Vec<TokenStream2> = variants_info
         .iter()
         .enumerate()
@@ -86,6 +261,18 @@ fn generate_languages_enum(
             quote! { #idx => Languages::#ident, }
         })
         .collect();
+
+    // Build snake_case name -> variant pairs for the trie
+    let lang_trie_data: Vec<(String, Ident)> = variants_info
+        .iter()
+        .map(|(ident, raw)| {
+            let snake = just_fmt::snake_case!(raw);
+            (snake, ident.clone())
+        })
+        .collect();
+
+    let display_impl = gen_lang_display(&variants_info);
+    let from_str_impl = gen_lang_from_str(&lang_trie_data);
 
     quote! {
         /// This constant stores the discriminant of the current language variant.
@@ -101,6 +288,10 @@ fn generate_languages_enum(
             #(#enum_variants)*
         }
 
+        #display_impl
+
+        #from_str_impl
+
         /// Get the current language from the global static variable
         #[inline(always)]
         pub fn lang() -> Languages {
@@ -110,9 +301,12 @@ fn generate_languages_enum(
             }
         }
 
-        /// Set the current language in the global static variable
+        /// Set the current language
+        ///
+        /// Accepts any type that implements `Into<Languages>` (e.g. `Languages`, `&str`, `String`).
         #[inline(always)]
-        pub fn set_lang(lang: Languages) {
+        pub fn set_lang(lang: impl Into<Languages>) {
+            let lang = lang.into();
             __SHAKE_HAND_LANG.store(lang as u8, std::sync::atomic::Ordering::Relaxed);
         }
     }

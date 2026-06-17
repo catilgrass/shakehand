@@ -176,6 +176,74 @@ mod test {
         let greeting = Global::greeting(Global::world());
         assert_eq!(greeting, "Hello, world!");
     }
+
+    #[test]
+    fn test_set_lang_from_str() {
+        let _lock = lock_lang();
+        set_lang("en");
+        assert_eq!(Global::world(), "world");
+
+        set_lang("zh_CN");
+        assert_eq!(Global::world(), "世界");
+
+        set_lang("zh-CN");
+        assert_eq!(Global::world(), "世界");
+
+        set_lang("  en  ");
+        assert_eq!(Global::world(), "world");
+    }
+
+    #[test]
+    fn test_set_lang_from_string() {
+        let _lock = lock_lang();
+        set_lang(String::from("fr"));
+        assert_eq!(Global::world(), "monde");
+
+        set_lang(String::from("zh_TW"));
+        assert_eq!(Global::world(), "世界");
+    }
+
+    #[test]
+    fn test_languages_display() {
+        let _lock = lock_lang();
+
+        assert_eq!(Languages::en.to_string(), "en");
+        assert_eq!(Languages::zh_CN.to_string(), "zh_CN");
+        assert_eq!(Languages::fr.to_string(), "fr");
+        assert_eq!(format!("{}", Languages::ja), "ja");
+    }
+
+    #[test]
+    fn test_from_str_cases() {
+        use std::convert::From;
+
+        assert_eq!(
+            <Languages as From<&str>>::from("en") as u8,
+            Languages::en as u8
+        );
+        assert_eq!(
+            <Languages as From<&str>>::from("zh_CN") as u8,
+            Languages::zh_CN as u8
+        );
+        assert_eq!(
+            <Languages as From<&str>>::from("zh-CN") as u8,
+            Languages::zh_CN as u8
+        );
+        assert_eq!(
+            <Languages as From<&str>>::from("ZH_CN") as u8,
+            Languages::zh_CN as u8
+        );
+        assert_eq!(
+            <Languages as From<&str>>::from("zh-cn") as u8,
+            Languages::zh_CN as u8
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown language")]
+    fn test_from_str_unknown() {
+        let _ = Languages::from("klingon");
+    }
 }
 
 mod locale {

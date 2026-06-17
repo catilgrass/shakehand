@@ -43,8 +43,8 @@
 //! ```
 //!
 //! The generated module will contain:
-//! - A `Languages` enum listing all languages
-//! - A `set_lang` function for switching the current language
+//! - A `Languages` enum listing all languages (implements `Display`, `From<&str>`, `From<String>`)
+//! - A `set_lang` function for switching the current language (accepts `impl Into<Languages>`, e.g. `Languages`, `&str`, `String`)
 //! - A unit struct `Global` (named after `global.toml`), whose associated functions are the translations for each key
 //!
 //! ## 4. Call Translations
